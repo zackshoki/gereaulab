@@ -194,14 +194,45 @@ for (dr in c("UMAP", "TSNE")) {
         width = 20,
         height = 12,
         units = "in",
-        device = cairo_pdf
       )
     }
-    
-mm <- mmDS(
-  sce,
-  method = "dream",
-  BPPARAM = MulticoreParam(workers = 4),
-  n_cells = 2,       # minimum cells per cluster per donor
-  min_cells = 1      # minimum cells expressing a gene in cluster
-)
+
+# batch processing
+register(SnowParam(4, type = "SOCK"))
+sce_obj <- sce 
+clusters <- levels(sce_obj$cluster_id)
+
+batch_size <- 4                     # number of clusters per batch
+cluster_batches <- split(clusters, ceiling(seq_along(clusters)/batch_size))
+
+results_list <- list()              # store results per batch
+BPPARAM <- SnowParam(workers = 2, type = "SOCK")  
+
+for (i in seq_along(cluster_batches)) {
+  
+  batch <- cluster_batches[[i]]
+  sce_batch <- sce_obj[, sce_obj$cluster_id %in% batch]  # subset SCE to batch
+  
+  cat("Processing batch", i, ":", paste(batch, collapse = ", "), "\n")
+  
+  mm <- mmDS(
+    sce_batch,
+    method = "dream",   # mixed model
+    n_cells = 2,        
+    min_cells = 1,
+    BPPARAM = BPPARAM,
+    verbose = TRUE
+  )
+  
+  # store results
+  results_list[[i]] <- mm
+  
+  # save intermediate results
+  saveRDS(results_list, "mm_partial_batches.rds")
+  cat("Saved intermediate results after batch", i, "\n")
+}
+
+all_results <- do.call(c, results_list)
+
+saveRDS(all_results, "mm_all_clusters.rds")
+cat("All batches completed and saved!\n")
